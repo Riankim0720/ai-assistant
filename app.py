@@ -5,9 +5,6 @@ import json
 import re
 from requests.auth import HTTPBasicAuth
 
-# ──────────────────────────────────────────────
-# 설정
-# ──────────────────────────────────────────────
 SYSTEM_PROMPT = """당신은 K사 기획부서를 위해 사업부 담당자로부터 요건 정보를 수집하는 AI 어시스턴트입니다.
 
 [역할]
@@ -33,7 +30,7 @@ SYSTEM_PROMPT = """당신은 K사 기획부서를 위해 사업부 담당자로�
 
 [수집 완료 처리]
 모든 항목이 충분히 수집되고 담당자가 확인하면, 반드시 아래 형식의 JSON을 응답 마지막에 포함하세요.
-텍스트 설명 먼저 작성 후, JSON을 ```json 코드블록으로 감싸서 추가하세요.
+텍스트 설명 먼저 작성 후, JSON을 코드블록으로 감싸서 추가하세요.
 
 ```json
 {
@@ -49,31 +46,28 @@ SYSTEM_PROMPT = """당신은 K사 기획부서를 위해 사업부 담당자로�
 
 SEPARATOR = "\n\n---AI 수집 결과---\n"
 
-──────────────────────────────────────────────
-Jira 연동 함수
-──────────────────────────────────────────────
 def get_jira_issue(issue_key):
 url = f"{st.secrets['JIRA_URL']}/rest/api/2/issue/{issue_key}"
 auth = HTTPBasicAuth(st.secrets["JIRA_USERNAME"], st.secrets["JIRA_PASSWORD"])
 headers = {"Accept": "application/json"}
-
 try:
-    response = requests.get(url, auth=auth, headers=headers, timeout=10)
-    if response.status_code == 200:
-        data = response.json()
-        summary = data["fields"].get("summary", "")
-        description = data["fields"].get("description", "") or ""
-        return {"summary": summary, "description": description, "error": None}
-    elif response.status_code == 401:
-        return {"error": "Jira 인증 실패: 아이디 또는 비밀번호를 확인해주세요."}
-    elif response.status_code == 404:
-        return {"error": f"이슈를 찾을 수 없습니다: {issue_key}"}
-    else:
-        return {"error": f"Jira 오류 ({response.status_code})"}
+response = requests.get(url, auth=auth, headers=headers, timeout=10)
+if response.status_code == 200:
+data = response.json()
+summary = data["fields"].get("summary", "")
+description = data["fields"].get("description", "") or ""
+return {"summary": summary, "description": description, "error": None}
+elif response.status_code == 401:
+return {"error": "Jira 인증 실패: 아이디 또는 비밀번호를 확인해주세요."}
+elif response.status_code == 404:
+return {"error": f"이슈를 찾을 수 없습니다: {issue_key}"}
+else:
+return {"error": f"Jira 오류 ({response.status_code})"}
 except requests.exceptions.ConnectionError:
-    return {"error": "Jira 서버에 연결할 수 없습니다. URL을 확인해주세요."}
+return {"error": "Jira 서버에 연결할 수 없습니다. URL을 확인해주세요."}
 except Exception as e:
-    return {"error": f"오류 발생: {str(e)}"}
+return {"error": f"오류 발생: {str(e)}"}
+
 def update_jira_description(issue_key, original_description, collected_fields):
 url = f"{st.secrets['JIRA_URL']}/rest/api/2/issue/{issue_key}"
 auth = HTTPBasicAuth(st.secrets["JIRA_USERNAME"], st.secrets["JIRA_PASSWORD"])
@@ -86,7 +80,6 @@ ai_result = (
     + f"[TO-BE] {collected_fields.get('TO_BE', '')}\n\n"
     + f"[발생계기] {collected_fields.get('발생계기', '')}"
 )
-# 이미 AI 수집 결과가 있으면 덮어쓰지 않고 새로 추가
 if SEPARATOR.strip() in (original_description or ""):
     base = original_description.split(SEPARATOR.strip())[0].rstrip()
 else:
@@ -107,9 +100,6 @@ try:
         return False, f"Jira 업데이트 실패 ({response.status_code}): {response.text}"
 except Exception as e:
     return False, f"오류 발생: {str(e)}"
-──────────────────────────────────────────────
-Claude 응답에서 JSON 파싱
-──────────────────────────────────────────────
 def extract_collected_json(text):
 pattern = r"json\s*(\{.*?\})\s*"
 matches = re.findall(pattern, text, re.DOTALL)
@@ -122,14 +112,10 @@ except Exception:
 continue
 return None
 
-──────────────────────────────────────────────
-UI 구성
-──────────────────────────────────────────────
 st.set_page_config(page_title="K사 요건 수집 AI", page_icon="🤖", layout="centered")
 st.title("🤖 요건 정보 수집 AI 어시스턴트")
 st.caption("Jira 이슈 번호를 입력하면 AI가 요건 정보를 수집해 드립니다.")
 
-세션 상태 초기화
 if "messages" not in st.session_state:
 st.session_state.messages = []
 if "issue_loaded" not in st.session_state:
@@ -141,7 +127,6 @@ st.session_state.collected = False
 if "current_issue_key" not in st.session_state:
 st.session_state.current_issue_key = ""
 
-── 이슈 번호 입력 ──
 with st.form("issue_form"):
 col1, col2 = st.columns([3, 1])
 with col1:
@@ -163,14 +148,12 @@ result = get_jira_issue(issue_key)
 if result.get("error"):
     st.error(result["error"])
 else:
-    # 새 이슈면 대화 초기화
     if issue_key != st.session_state.current_issue_key:
         st.session_state.messages = []
         st.session_state.collected = False
     st.session_state.issue_data = result
     st.session_state.issue_loaded = True
     st.session_state.current_issue_key = issue_key
-    # 첫 AI 인사말 생성
     if not st.session_state.messages:
         client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
         intro_user_msg = (
@@ -187,22 +170,16 @@ else:
                 messages=[{"role": "user", "content": intro_user_msg}],
             )
         ai_text = response.content[0].text
-        st.session_state.messages.append(
-            {"role": "assistant", "content": ai_text}
-        )
-── 이슈 정보 표시 ──
+        st.session_state.messages.append({"role": "assistant", "content": ai_text})
 if st.session_state.issue_loaded and st.session_state.issue_data:
 with st.expander(f"📋 {st.session_state.current_issue_key} 이슈 정보", expanded=False):
 st.write(f"제목: {st.session_state.issue_data['summary']}")
 
-── 수집 완료 배너 ──
 if st.session_state.collected:
 st.success("✅ 요건 정보 수집 완료! Jira Description이 업데이트되었습니다.")
 
-── 대화 내역 출력 ──
 for msg in st.session_state.messages:
 if msg["role"] == "assistant":
-# JSON 코드블록 숨기고 표시
 display_text = re.sub(r"json.*?", "", msg["content"], flags=re.DOTALL).strip()
 with st.chat_message("assistant", avatar="🤖"):
 st.markdown(display_text)
@@ -210,7 +187,6 @@ else:
 with st.chat_message("user", avatar="🙋"):
 st.markdown(msg["content"])
 
-── 입력창 ──
 if st.session_state.issue_loaded and not st.session_state.collected:
 user_input = st.chat_input("답변을 입력해 주세요...")
 
@@ -221,14 +197,13 @@ if user_input:
     with st.chat_message("assistant", avatar="🤖"):
         with st.spinner("AI가 응답 중..."):
             client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
-            # 첫 컨텍스트 메시지 포함
             context_msg = (
                 f"Jira 이슈 [{st.session_state.current_issue_key}]\n"
                 f"이슈 제목: {st.session_state.issue_data['summary']}\n"
                 f"담당자 설명: {st.session_state.issue_data['description'] or '(없음)'}"
             )
             api_messages = [{"role": "user", "content": context_msg}]
-            for m in st.session_state.messages[:-1]:  # 마지막 user 제외 (아래서 추가)
+            for m in st.session_state.messages[:-1]:
                 api_messages.append({"role": m["role"], "content": m["content"]})
             api_messages.append({"role": "user", "content": user_input})
             response = client.messages.create(
@@ -241,7 +216,6 @@ if user_input:
         display_text = re.sub(r"```json.*?```", "", ai_text, flags=re.DOTALL).strip()
         st.markdown(display_text)
     st.session_state.messages.append({"role": "assistant", "content": ai_text})
-    # 수집 완료 감지
     collected_fields = extract_collected_json(ai_text)
     if collected_fields:
         with st.spinner("Jira Description 업데이트 중..."):
