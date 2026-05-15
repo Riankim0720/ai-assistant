@@ -1,46 +1,11 @@
 import streamlit as st
 import anthropic
+import httpx
 import requests
 import json
 import re
 from requests.auth import HTTPBasicAuth
-
-_BT = "`" * 3
-
-SYSTEM_PROMPT = (
-    "당신은 K사 기획부서를 위해 사업부 담당자로부터 요건 정보를 수집하는 AI 어시스턴트입니다.\n\n"
-    "[역할]\n"
-    "사업부 담당자가 Jira에 요건을 등록하면, 대화를 통해 배경목적 섹션의 4가지 항목을 수집합니다.\n"
-    "- 요건배경: 왜 이 요건이 필요한가, 어떤 문제가 있는가\n"
-    "- AS-IS 현황: 현재 어떻게 운영되고 있는가\n"
-    "- TO-BE 목표: 개선 후 어떤 상태가 되어야 하는가\n"
-    "- 발생계기: 이 요건이 올라온 구체적인 트리거\n\n"
-    "[대화 원칙]\n"
-    "1. 한 번에 하나의 질문만 한다. 여러 질문을 동시에 묻지 않는다.\n"
-    "2. 담당자 답변을 그대로 저장하지 말고, 불명확한 부분은 반드시 재질문한다.\n"
-    "3. 비즈니스 임팩트(수치, 규모, 빈도)가 없으면 한 번은 수치를 물어본다.\n"
-    "4. 이미 앞 답변에서 파악된 내용은 다시 묻지 않는다.\n"
-    "5. 담당자가 바쁜 상황을 고려해 친절하고 간결하게 질문한다.\n"
-    "6. 모든 항목 수집 완료 시, 수집 내용을 요약해서 확인을 받는다.\n\n"
-    "[충분도 판단 기준]\n"
-    "- 요건배경: 문제 상황 + 현재 불편함의 구체적 묘사가 있으면 충분\n"
-    "- AS-IS: 현재 운영 방식이 단계/흐름으로 설명되면 충분\n"
-    "- TO-BE: 기대 결과가 구체적이고 검증 가능한 수준이면 충분\n"
-    "- 발생계기: 외부 이벤트 또는 내부 판단 근거가 있으면 충분. 앞 답변에서 나온 경우 생략 가능.\n\n"
-    "[수집 완료 처리]\n"
-    "모든 항목이 충분히 수집되고 담당자가 확인하면, 텍스트 설명 후 반드시 아래 JSON을 출력하세요.\n\n"
-    + _BT + "json\n"
-    + '{\n'
-    + '  "status": "collected",\n'
-    + '  "fields": {\n'
-    + '    "요건배경": "...",\n'
-    + '    "AS_IS": "...",\n'
-    + '    "TO_BE": "...",\n'
-    + '    "발생계기": "..."\n'
-    + '  }\n'
-    + '}\n'
-    + _BT
-)
+from prompt import SYSTEM_PROMPT
 
 SEPARATOR = "\n\n---AI 수집 결과---\n"
 
@@ -50,7 +15,7 @@ def get_jira_issue(issue_key):
     auth = HTTPBasicAuth(st.secrets["JIRA_USERNAME"], st.secrets["JIRA_PASSWORD"])
     headers = {"Accept": "application/json"}
     try:
-        response = requests.get(url, auth=auth, headers=headers, timeout=10)
+        response = requests.get(url, auth=auth, headers=headers, timeout=10, verify=False)
         if response.status_code == 200:
             data = response.json()
             summary = data["fields"].get("summary", "")
@@ -97,7 +62,7 @@ def update_jira_description(issue_key, original_description, collected_fields):
     try:
         response = requests.put(
             url, auth=auth, headers=headers,
-            data=json.dumps(payload), timeout=10
+            data=json.dumps(payload), timeout=10, verify=False
         )
         if response.status_code == 204:
             return True, None
@@ -177,7 +142,10 @@ if submitted and issue_key_input:
         st.session_state.current_issue_key = issue_key
 
         if not st.session_state.messages:
-            client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
+            client = anthropic.Anthropic(
+                api_key=st.secrets["ANTHROPIC_API_KEY"],
+                http_client=httpx.Client(verify=False)
+            )
             intro_user_msg = (
                 "Jira 이슈 [" + issue_key + "]가 등록되었습니다.\n"
                 "이슈 제목: " + result["summary"] + "\n"
@@ -221,7 +189,10 @@ if st.session_state.issue_loaded and not st.session_state.collected:
 
         with st.chat_message("assistant", avatar="🤖"):
             with st.spinner("AI가 응답 중..."):
-                client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
+                client = anthropic.Anthropic(
+                    api_key=st.secrets["ANTHROPIC_API_KEY"],
+                    http_client=httpx.Client(verify=False)
+                )
                 api_messages = build_api_messages(
                     st.session_state.current_issue_key,
                     st.session_state.issue_data,
